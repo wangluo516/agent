@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+.venv/
+.verify-venv/
+.env
+*.db
+*.egg-info/
+build/
+dist/
+uvicorn-task5*.log

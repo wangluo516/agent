@@ -1,0 +1,17 @@
+:root { color-scheme: light; font-family: system-ui, sans-serif; background: #f5f7fb; color: #18212f; }
+* { box-sizing: border-box; }
+body { margin: 0; }
+.shell { width: min(100% - 2rem, 44rem); margin: 2rem auto; }
+h1 { margin-bottom: .25rem; }
+header p { margin-top: 0; color: #526070; }
+.chat { background: #fff; border: 1px solid #d8e0eb; border-radius: .75rem; padding: 1rem; box-shadow: 0 4px 18px #16203012; }
+.messages { min-height: 18rem; display: grid; gap: .75rem; margin-bottom: 1rem; }
+.message { max-width: 85%; padding: .75rem; border-radius: .75rem; white-space: pre-wrap; }
+.user { justify-self: end; background: #1456c0; color: #fff; }
+.assistant { background: #e9edf3; }
+form { display: grid; gap: .5rem; }
+textarea, button { font: inherit; }
+textarea { padding: .6rem; resize: vertical; border: 1px solid #8190a3; border-radius: .4rem; }
+button { justify-self: start; padding: .55rem 1rem; border: 0; border-radius: .4rem; background: #1456c0; color: #fff; cursor: pointer; }
+button:focus-visible, textarea:focus-visible { outline: 3px solid #f5b700; outline-offset: 2px; }
+@media (max-width: 35rem) { .shell { width: min(100% - 1rem, 44rem); margin: 1rem auto; } .messages { min-height: 14rem; } }

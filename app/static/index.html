@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>智能会议助手</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <main class="shell">
+    <header><h1>智能会议助手</h1><p>创建、查询和修改会议；写入前始终需要确认。</p></header>
+    <section class="chat" aria-label="会议助手对话">
+      <div id="messages" class="messages" aria-live="polite" aria-relevant="additions"></div>
+      <form id="chat-form">
+        <label for="message">你的消息</label>
+        <textarea id="message" name="message" rows="3" required maxlength="4000" placeholder="例如：创建设计评审会议"></textarea>
+        <button type="submit">发送</button>
+      </form>
+    </section>
+  </main>
+  <script src="/app.js" defer></script>
+</body>
+</html>

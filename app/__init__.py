@@ -1,0 +1,1 @@
+"""Smart meeting assistant application."""
