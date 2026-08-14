@@ -20,7 +20,7 @@ _ROOMS = (
         name="Orchid",
         capacity=6,
         features=("display", "whiteboard"),
-        topics=("design",),
+        topics=("design", "设计"),
         busy_intervals=(
             RoomBusyInterval(
                 start_at=datetime(2026, 8, 20, 10, tzinfo=SHANGHAI_TZ),

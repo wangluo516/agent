@@ -58,7 +58,9 @@ async def test_busy_demo_attendee_is_rejected_before_preview_and_write(app) -> N
         query = await chat(client, "busy-flow", "查询我的会议")
 
     assert rejected["status"] == "rejected"
-    assert "暂时不可用" in rejected["reply"]
+    assert "carol" in rejected["reply"]
+    assert "忙碌" in rejected["reply"]
+    assert "暂时不可用" not in rejected["reply"]
     assert query["reply"].count("设计评审") == 1
 
 
@@ -109,6 +111,18 @@ async def test_query_then_update_just_that_meeting_to_3pm_after_confirmation(app
     assert preview["meeting_draft"]["start_at"].endswith("15:00:00+08:00")
     assert updated["status"] == "done"
     assert "15:00" in after["reply"]
+
+
+@pytest.mark.asyncio
+async def test_update_time_without_date_keeps_selected_meeting_day(app) -> None:
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        await chat(client, "same-day-update", "查询我的会议")
+        preview = await chat(client, "same-day-update", "把时间改到下午3点")
+
+    assert preview["status"] == "needs_confirmation"
+    assert preview["meeting_draft"]["start_at"] == "2026-08-15T15:00:00+08:00"
+    assert preview["meeting_draft"]["end_at"] == "2026-08-15T16:00:00+08:00"
 
 
 @pytest.mark.asyncio

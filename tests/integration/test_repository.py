@@ -5,6 +5,7 @@ import pytest
 
 from app.domain.errors import ConflictError
 from app.domain.models import Actor, MeetingDraft, MeetingPatch
+from app.repositories import meetings as meetings_module
 from app.repositories.meetings import MeetingRepository
 
 
@@ -75,3 +76,53 @@ def test_empty_patch_is_rejected_without_version_increment(
         repository.update("alice", meeting.id, MeetingPatch(), expected_version=1)
 
     assert repository.find_visible(Actor(id="alice", display_name="Alice"), meeting.id).version == 1
+
+
+def test_repository_closes_every_sqlite_connection(
+    tmp_path: Path, draft: MeetingDraft, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    original_connect = meetings_module.sqlite3.connect
+    connections = []
+
+    class TrackingConnection:
+        def __init__(self, *args, **kwargs) -> None:
+            self._connection = original_connect(*args, **kwargs)
+            self.closed = False
+
+        def __enter__(self):
+            self._connection.__enter__()
+            return self
+
+        def __exit__(self, *args):
+            return self._connection.__exit__(*args)
+
+        def close(self) -> None:
+            self.closed = True
+            self._connection.close()
+
+        @property
+        def row_factory(self):
+            return self._connection.row_factory
+
+        @row_factory.setter
+        def row_factory(self, value) -> None:
+            self._connection.row_factory = value
+
+        def __getattr__(self, name):
+            return getattr(self._connection, name)
+
+    def tracking_connect(*args, **kwargs):
+        connection = TrackingConnection(*args, **kwargs)
+        connections.append(connection)
+        return connection
+
+    monkeypatch.setattr(meetings_module.sqlite3, "connect", tracking_connect)
+    repository = MeetingRepository(tmp_path / "connections.db")
+    meeting = repository.create("alice", draft, "request-connection")
+    actor = Actor(id="alice", display_name="Alice")
+    repository.list_for_actor(actor)
+    repository.find_visible(actor, meeting.id)
+    repository.update("alice", meeting.id, MeetingPatch(title="连接测试"), meeting.version)
+
+    assert connections
+    assert all(connection.closed for connection in connections)

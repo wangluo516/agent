@@ -68,11 +68,19 @@ class PendingAction(ImmutableModel):
     meeting_id: str | None = None
 
 
+class MeetingCandidate(ImmutableModel):
+    id: str = Field(min_length=1)
+    title: str = Field(min_length=1)
+    start_at: datetime
+    end_at: datetime
+
+
 class ConversationState(ImmutableModel):
     actor_id: str = Field(min_length=1)
     conversation_id: str = Field(min_length=1)
     draft: MeetingPatch | None = None
     selected_meeting_id: str | None = None
+    meeting_candidates: tuple[MeetingCandidate, ...] = ()
     pending_action: PendingAction | None = None
     last_tool_results: tuple[dict[str, object], ...] = ()
     status: Literal[

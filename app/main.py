@@ -1,3 +1,4 @@
+from contextlib import asynccontextmanager
 from pathlib import Path
 from uuid import uuid4
 
@@ -23,8 +24,17 @@ def _error_response(request: Request, status_code: int, code: str, message: str)
 
 
 def create_app(runtime: Runtime | None = None) -> FastAPI:
-    application = FastAPI(title="Meeting Assistant", docs_url=None, redoc_url=None)
-    application.state.runtime = runtime or build_runtime(settings=load_settings())
+    selected_runtime = runtime or build_runtime(settings=load_settings())
+
+    @asynccontextmanager
+    async def lifespan(application: FastAPI):
+        yield
+        await application.state.runtime.aclose()
+
+    application = FastAPI(
+        title="Meeting Assistant", docs_url=None, redoc_url=None, lifespan=lifespan
+    )
+    application.state.runtime = selected_runtime
 
     @application.middleware("http")
     async def attach_request_id(request: Request, call_next):

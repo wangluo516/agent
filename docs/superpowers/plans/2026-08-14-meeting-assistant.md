@@ -1,110 +1,109 @@
-# Smart Meeting Assistant Implementation Plan
+# 智能会议助手初始实施计划
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **面向执行者：** 按任务逐项实施，并使用复选框记录进度。行为变更遵循测试驱动开发：先确认测试按预期失败，再编写生产代码。
 
-**Goal:** Build a locally runnable, test-first intelligent meeting assistant that creates, queries, and updates meetings through a controlled LangGraph workflow with mock calendar/room APIs and deterministic safety enforcement.
+**目标：** 构建一个本地可运行、测试优先的智能会议助手，通过受控 LangGraph 工作流和模拟日历、会议室 API 创建、查询和修改会议。
 
-**Architecture:** FastAPI exposes chat and mock integration endpoints. A typed LangGraph workflow uses an injectable natural-language interpreter, immutable conversation state, deterministic policy checks, repository-backed meeting tools, and explicit confirmation before writes. Business data and conversation checkpoints use separate SQLite stores.
+**架构：** FastAPI 提供聊天及模拟集成端点。类型化 LangGraph 工作流使用可注入的自然语言解释器、不可变会话状态、确定性策略检查、会议仓库工具和写入前明确确认。
 
-**Tech Stack:** Python 3.13, FastAPI, LangGraph, LangChain Core/OpenAI adapter, Pydantic v2, SQLite, httpx, pytest, pytest-cov, Ruff.
+**技术栈：** Python 3.12、FastAPI、LangGraph、LangChain Core/OpenAI 适配器、Pydantic v2、SQLite、httpx、pytest、pytest-cov、Ruff。
 
-## Global Constraints
+## 全局约束
 
-- Default timezone is exactly `Asia/Shanghai`; tests use an injectable fixed clock.
-- Core statement and branch coverage is at least 80%; security and policy branches target at least 95%.
-- Production code is written only after a covering test has failed for the expected reason.
-- State and domain updates return new values; do not mutate existing models or collections.
-- The model interprets language only; identity, authorization, confirmation, and writes are deterministic code.
-- No delete, bulk-update, arbitrary SQL, or arbitrary HTTP tool exists.
-- Create and update require preview plus explicit confirmation; rejected requests produce zero write side effects.
-- The application runs without an API key in `demo` mode and supports an optional real model through environment configuration.
+- 默认时区固定为 `Asia/Shanghai`，测试使用可注入的固定时钟；
+- 核心语句和分支覆盖率至少为 80%；
+- 生产代码只在对应测试按预期失败后编写；
+- 状态和领域更新返回新值，不修改已有模型或集合；
+- 模型只解释语言，身份、授权、确认和写入由确定性代码控制；
+- 不提供删除、批量修改、任意 SQL 或任意 HTTP 工具；
+- 创建和更新必须经过预览及明确确认，被拒绝请求不得产生写入；
+- `demo` 模式无需 API key，真实模型通过环境变量启用。
 
 ---
 
-### Task 1: Project foundation, domain models, repository, and policies
+### 任务 1：项目基础、领域模型、仓库和策略
 
-**Files:**
-- Create: `pyproject.toml`, `.gitignore`, `.env.example`
-- Create: `app/config.py`, `app/domain/models.py`, `app/domain/errors.py`, `app/domain/policies.py`
-- Create: `app/repositories/meetings.py`, `app/repositories/schema.sql`, `app/repositories/seed.py`
-- Test: `tests/unit/test_models.py`, `tests/unit/test_policies.py`, `tests/integration/test_repository.py`
+**文件：**
+- 创建：`pyproject.toml`、`.gitignore`、`.env.example`；
+- 创建：`app/config.py`、`app/domain/models.py`、`app/domain/errors.py`、`app/domain/policies.py`；
+- 创建：`app/repositories/meetings.py`、`app/repositories/schema.sql`、`app/repositories/seed.py`；
+- 测试：`tests/unit/test_models.py`、`tests/unit/test_policies.py`、`tests/integration/test_repository.py`。
 
-**Interfaces:**
-- Produces immutable Pydantic models `MeetingDraft`, `MeetingPatch`, `Meeting`, `Actor`, `PendingAction`, `ConversationState`.
-- Produces `MeetingRepository` with `list_for_actor`, `find_visible`, `create`, and `update` using parameterized SQLite and optimistic `version` checks.
-- Produces pure policies `validate_draft`, `authorize_query`, `authorize_update`, `classify_unsafe_request`, and confirmation hashing.
+**产出接口：**
+- 不可变 Pydantic 模型 `MeetingDraft`、`MeetingPatch`、`Meeting`、`Actor`、`PendingAction`、`ConversationState`；
+- `MeetingRepository.list_for_actor/find_visible/create/update`，使用参数化 SQLite 和乐观版本检查；
+- 纯策略函数 `validate_draft`、`authorize_query`、`authorize_update`、`classify_unsafe_request` 和确认哈希。
 
-- [ ] Write model, policy, and repository tests for validation, visibility, organizer-only updates, idempotent create, and optimistic locking.
-- [ ] Run focused tests and verify collection/import failures are caused by missing production modules.
-- [ ] Implement only the required models, schema, repository, and policies.
-- [ ] Run focused tests, refactor while green, and verify the task report records RED and GREEN commands.
+- [ ] 编写模型、策略和仓库失败测试；
+- [ ] 确认失败原因是缺少生产模块或行为；
+- [ ] 实现最小领域模型、schema、仓库和策略；
+- [ ] 运行定向测试并在全绿状态下整理代码。
 
-### Task 2: Availability, room recommendation, mock APIs, and typed clients
+### 任务 2：空闲时间、会议室推荐、模拟 API 和类型化客户端
 
-**Files:**
-- Create: `app/domain/availability.py`, `app/domain/room_ranking.py`
-- Create: `app/integrations/models.py`, `app/integrations/calendar_client.py`, `app/integrations/room_client.py`
-- Create: `app/api/mock_integrations.py`, `app/api/dependencies.py`
-- Test: `tests/unit/test_availability.py`, `tests/unit/test_room_ranking.py`, `tests/integration/test_mock_integrations.py`
+**文件：**
+- 创建：`app/domain/availability.py`、`app/domain/room_ranking.py`；
+- 创建：`app/integrations/models.py`、`app/integrations/calendar_client.py`、`app/integrations/room_client.py`；
+- 创建：`app/api/mock_integrations.py`、`app/api/dependencies.py`；
+- 测试：`tests/unit/test_availability.py`、`tests/unit/test_room_ranking.py`、`tests/integration/test_mock_integrations.py`。
 
-**Interfaces:**
-- Consumes `MeetingDraft` and application settings from Task 1.
-- Produces `find_common_free_slots(busy_by_user, window_start, window_end, duration_minutes)`.
-- Produces deterministic `rank_rooms(rooms, topic, attendee_count, required_features)`.
-- Exposes `POST /mock/calendar/freebusy` and `POST /mock/rooms/search`; typed clients validate complete responses and surface controlled integration errors.
+**产出接口：**
+- `find_common_free_slots(busy_by_user, window_start, window_end, duration_minutes)`；
+- 确定性的 `rank_rooms(rooms, topic, attendee_count, required_features)`；
+- `POST /mock/calendar/freebusy` 和 `POST /mock/rooms/search`；
+- 校验完整响应并转换受控集成错误的 HTTP client。
 
-- [ ] Write failing interval, ranking, endpoint-contract, and malformed-upstream tests using literal expected values.
-- [ ] Run focused tests and verify failures are due to missing behavior.
-- [ ] Implement pure algorithms, seed fixtures, endpoints, and typed clients.
-- [ ] Run focused tests and refactor without changing behavior.
+- [ ] 编写时间区间、会议室排序、端点契约和异常响应测试；
+- [ ] 确认测试因缺少目标行为而失败；
+- [ ] 实现算法、固定数据、端点和类型化 client；
+- [ ] 运行定向测试并保持行为不变地整理代码。
 
-### Task 3: Intent interpreter and controlled LangGraph workflow
+### 任务 3：意图解释器和受控 LangGraph 工作流
 
-**Files:**
-- Create: `app/agent/interpreter.py`, `app/agent/demo_interpreter.py`, `app/agent/llm_interpreter.py`
-- Create: `app/agent/state.py`, `app/agent/service.py`, `app/agent/graph.py`, `app/agent/tools.py`
-- Test: `tests/unit/test_demo_interpreter.py`, `tests/unit/test_state.py`, `tests/integration/test_agent_workflow.py`
+**文件：**
+- 创建：`app/agent/interpreter.py`、`app/agent/demo_interpreter.py`、`app/agent/llm_interpreter.py`；
+- 创建：`app/agent/state.py`、`app/agent/service.py`、`app/agent/graph.py`、`app/agent/tools.py`；
+- 测试：`tests/unit/test_demo_interpreter.py`、`tests/unit/test_state.py`、`tests/integration/test_agent_workflow.py`。
 
-**Interfaces:**
-- Consumes repositories, policies, availability and room clients.
-- Produces `MeetingCommand` operations `create|query|update|confirm|cancel|unsafe|unknown` and partial `MeetingPatch` values.
-- Produces `MeetingAssistant.handle(ChatContext, message) -> AssistantReply` with states `collecting|needs_clarification|needs_confirmation|done|rejected`.
-- The graph has bounded nodes for precheck, interpret, reduce/resolve, validate, query integrations, preview, confirm, and execute; it has no unbounded ReAct loop.
+**产出接口：**
+- 结构化 `MeetingCommand` 和部分 `MeetingPatch`；
+- `MeetingAssistant.handle(ChatContext, message) -> AssistantReply`；
+- 状态 `collecting|needs_clarification|needs_confirmation|done|rejected`；
+- 有界节点：安全预检、解释、状态归并与目标解析、校验、集成查询、预览、确认和执行。
 
-- [ ] Write failing tests for incomplete create, multi-turn patching, query, update by context, explicit confirmation, state isolation, unsafe rejection, zero writes, and tool failure.
-- [ ] Verify all tests fail for missing workflow behavior.
-- [ ] Implement the interpreter interface, deterministic demo interpreter, optional real-model interpreter, immutable state reducer, tools, and graph.
-- [ ] Run focused tests; refactor graph nodes below 50 lines where practical while keeping tests green.
+- [ ] 编写不完整创建、多轮补充、查询、修改、确认、状态隔离和危险请求测试；
+- [ ] 确认测试因缺少工作流行为而失败；
+- [ ] 实现解释器、不可变 reducer、工具和固定图；
+- [ ] 运行工作流测试并控制节点复杂度。
 
-### Task 4: FastAPI chat surface and minimal browser UI
+### 任务 4：FastAPI 聊天接口和最小浏览器界面
 
-**Files:**
-- Create: `app/api/chat.py`, `app/main.py`, `app/runtime.py`
-- Create: `static/index.html`, `static/app.js`, `static/styles.css`
-- Test: `tests/integration/test_chat_api.py`, `tests/e2e/test_user_journeys.py`
+**文件：**
+- 创建：`app/api/chat.py`、`app/main.py`、`app/runtime.py`；
+- 创建：`app/static/index.html`、`app/static/app.js`、`app/static/styles.css`；
+- 测试：`tests/integration/test_chat_api.py`、`tests/e2e/test_user_journeys.py`。
 
-**Interfaces:**
-- Exposes `POST /api/chat` with `conversation_id`, `message` and demo `actor_id`, returning `reply`, `status`, optional `meeting_draft`, `needs_confirmation`, and `request_id`.
-- Exposes `GET /health` and serves the accessible one-page chat UI at `/`.
-- E2E API journeys prove create/query/update and unsafe-request zero-side-effect behavior.
+**产出接口：**
+- `POST /api/chat` 接收 `conversation_id`、`message` 和 `X-Demo-Actor`；
+- 返回 `reply`、`status`、可选 `meeting_draft`、`needs_confirmation` 和 `request_id`；
+- `GET /health` 与 `/` 单页聊天界面；
+- 端到端用户旅程证明创建、查询、更新和危险请求零写入。
 
-- [ ] Write failing route and complete-journey tests before registering endpoints.
-- [ ] Run focused tests and verify expected 404/import failures.
-- [ ] Implement runtime wiring, routes, exception envelopes, and the dependency-free UI.
-- [ ] Run integration/E2E tests and refactor while green.
+- [ ] 先编写路由和完整旅程失败测试；
+- [ ] 实现运行时装配、路由、异常信封和无依赖界面；
+- [ ] 运行集成及端到端测试并整理代码。
 
-### Task 5: Reproducibility, documentation, and full verification
+### 任务 5：可复现交付、文档和完整验证
 
-**Files:**
-- Create: `README.md`, `Dockerfile`
-- Modify: `DESIGN.md`, `.env.example`, `pyproject.toml`
-- Test: all existing tests
+**文件：**
+- 创建：`README.md`、`Dockerfile`；
+- 修改：`DESIGN.md`、`.env.example`、`pyproject.toml`；
+- 测试：全部既有测试。
 
-**Interfaces:**
-- Produces one-command local startup, deterministic seed/reset instructions, optional real-model configuration, test/coverage commands, and a four-scenario demo script.
+**产出：** 一条命令完成本地启动、确定性种子与重置说明、可选真实模型配置、测试覆盖率命令和演示脚本。
 
-- [ ] Install the project in a clean virtual environment and run Ruff plus the complete test suite with branch coverage.
-- [ ] Exercise `/health`, the homepage, and all four scripted conversations against a running process.
-- [ ] Run dependency/security checks and scan the repository for accidental secrets.
-- [ ] Review `DESIGN.md` for the two-page limit, scope consistency, and absence of placeholders.
-- [ ] Record exact verification evidence and any remaining limitations in the task report.
+- [ ] 在干净虚拟环境安装项目并运行 Ruff 与完整分支覆盖率测试；
+- [ ] 验证 `/health`、首页和全部演示对话；
+- [ ] 执行依赖、安全和意外密钥检查；
+- [ ] 检查 `DESIGN.md` 的篇幅、范围一致性和占位符；
+- [ ] 记录准确验证证据和剩余限制。
