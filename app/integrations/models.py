@@ -28,6 +28,7 @@ class FreeBusyRequest(ImmutableModel):
     attendee_ids: tuple[str, ...] = Field(min_length=1)
     window_start: datetime
     window_end: datetime
+    exclude_meeting_id: str | None = None
 
     @field_validator("window_start", "window_end")
     @classmethod

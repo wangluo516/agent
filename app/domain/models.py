@@ -89,5 +89,14 @@ class ConversationState(ImmutableModel):
 
     def with_draft(self, patch: MeetingPatch) -> "ConversationState":
         merged = (self.draft or MeetingPatch()).model_dump(exclude_unset=True)
-        merged.update(patch.model_dump(exclude_unset=True))
+        changes = patch.model_dump(exclude_unset=True)
+        if (
+            changes.get("start_at") is not None
+            and changes.get("end_at") is None
+            and self.draft is not None
+            and self.draft.start_at is not None
+            and self.draft.end_at is not None
+        ):
+            changes["end_at"] = changes["start_at"] + (self.draft.end_at - self.draft.start_at)
+        merged.update(changes)
         return self.model_copy(update={"draft": MeetingPatch(**merged)})

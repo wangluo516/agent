@@ -12,6 +12,7 @@ class WorkflowData(TypedDict, total=False):
     state: Any
     reply: Any
     prepared: Any
+    preview: Any
     expected_version: int
     confirmed: bool
 

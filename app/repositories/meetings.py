@@ -33,6 +33,14 @@ class MeetingRepository:
             ).fetchone()
         return self._to_meeting(row) if row is not None and self._is_visible(actor, row) else None
 
+    def list_overlapping(self, window_start: datetime, window_end: datetime) -> list[Meeting]:
+        with closing(self._connect()) as connection, connection:
+            rows = connection.execute(
+                "SELECT * FROM meetings WHERE start_at < ? AND end_at > ? ORDER BY start_at, id",
+                (window_end.isoformat(), window_start.isoformat()),
+            ).fetchall()
+        return [self._to_meeting(row) for row in rows]
+
     def create(self, organizer_id: str, draft: MeetingDraft, idempotency_key: str) -> Meeting:
         with closing(self._connect()) as connection, connection:
             existing = connection.execute(

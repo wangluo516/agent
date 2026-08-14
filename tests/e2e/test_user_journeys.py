@@ -36,7 +36,7 @@ async def test_create_uses_freebusy_and_room_then_requires_confirmation_before_w
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         collecting = await chat(client, "create-flow", "创建设计评审会议")
         preview = await chat(client, "create-flow", "明天下午3点，持续1小时，参会人 bob，需要白板")
-        before = await chat(client, "create-flow", "查询我的会议")
+        before = await chat(client, "create-flow-readonly-check", "查询我的会议")
         confirmed = await chat(client, "create-flow", "确认")
         after = await chat(client, "create-flow", "查询我的会议")
 
@@ -95,6 +95,28 @@ async def test_public_calendar_and_assistant_agree_carol_is_busy_without_exposin
     ]
     assert "title" not in calendar.text.lower()
     assert rejected["status"] == "rejected"
+
+
+@pytest.mark.asyncio
+async def test_confirmed_meeting_marks_its_attendee_busy_for_later_queries(app) -> None:
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        await chat(client, "persisted-busy-create", "创建开发会议")
+        await chat(
+            client,
+            "persisted-busy-create",
+            "明天下午3点，持续1小时，参会人 bob，需要白板",
+        )
+        saved = await chat(client, "persisted-busy-create", "确认")
+        availability = await chat(
+            client,
+            "persisted-busy-query",
+            "查询 bob 明天下午3点半是否空闲",
+        )
+
+    assert saved["status"] == "done"
+    assert "忙碌" in availability["reply"]
+    assert "均空闲" not in availability["reply"]
 
 
 @pytest.mark.asyncio

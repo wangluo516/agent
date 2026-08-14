@@ -38,7 +38,16 @@ class DemoInterpreter:
             reference_date = selected.start_at.date() if selected is not None else None
         return MeetingCommand(
             operation=operation,
-            patch=self._patch(normalized, context.now, reference_date=reference_date),
+            patch=self._patch(
+                normalized,
+                context.now,
+                reference_date=reference_date,
+                existing_attendees=(
+                    context.state.draft.attendee_ids
+                    if context.state.draft and context.state.draft.attendee_ids
+                    else ()
+                ),
+            ),
         )
 
     @staticmethod
@@ -74,6 +83,8 @@ class DemoInterpreter:
 
     @staticmethod
     def _operation(message: str, context: InterpretContext) -> str:
+        if context.state.pending_action is not None:
+            return context.state.pending_action.action
         if any(token in message for token in ("改到", "改成", "修改", "改期")):
             return "update"
         if (
@@ -84,7 +95,9 @@ class DemoInterpreter:
             return "create"
         return "unknown"
 
-    def _patch(self, message: str, now: datetime, reference_date=None) -> MeetingPatch:
+    def _patch(
+        self, message: str, now: datetime, reference_date=None, existing_attendees=()
+    ) -> MeetingPatch:
         values: dict[str, object] = {}
         title = re.search(r"创建(.+?)(?:会议|$)", message)
         if title:
@@ -95,16 +108,28 @@ class DemoInterpreter:
             values["start_at"] = start
             if duration:
                 values["end_at"] = start + timedelta(hours=int(duration.group(1)))
-        attendees = re.search(r"参会人\s*([\w\s和、,，-]+?)(?:，|,|需要|$)", message)
-        if attendees:
-            values["attendee_ids"] = tuple(
-                value
-                for value in re.split(r"\s*(?:和|、|,|，)\s*|\s+", attendees.group(1).strip())
-                if value
-            )
+        addition = re.search(
+            r"参会人\s*(?:再\s*)?(?:加|增加|添加)(?:上)?(?:一个|一位)?\s*"
+            r"([\w\s和、,，-]+?)(?:，|,|需要|$)",
+            message,
+        )
+        attendees = re.search(r"参会人\s*[:：]?\s*([\w\s和、,，-]+?)(?:，|,|需要|$)", message)
+        if addition:
+            added = self._split_attendees(addition.group(1))
+            values["attendee_ids"] = tuple(dict.fromkeys((*existing_attendees, *added)))
+        elif attendees:
+            values["attendee_ids"] = self._split_attendees(attendees.group(1))
         if "白板" in message:
             values["required_features"] = ("whiteboard",)
         return MeetingPatch(**values)
+
+    @staticmethod
+    def _split_attendees(value: str) -> tuple[str, ...]:
+        return tuple(
+            attendee
+            for attendee in re.split(r"\s*(?:和|、|,|，)\s*|\s+", value.strip())
+            if attendee
+        )
 
     def _availability_query(self, message: str, now: datetime) -> AvailabilityQuery:
         attendee_ids = tuple(

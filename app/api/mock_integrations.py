@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 
 from app.domain.models import SHANGHAI_TZ
 from app.domain.room_ranking import Room, RoomBusyInterval, rank_rooms
@@ -40,8 +40,17 @@ _ROOMS = (
 
 
 @router.post("/mock/calendar/freebusy", response_model=FreeBusyResponse)
-def freebusy(request: FreeBusyRequest) -> FreeBusyResponse:
-    return demo_freebusy(request)
+def freebusy(payload: FreeBusyRequest, request: Request) -> FreeBusyResponse:
+    repository = getattr(request.app.state, "meeting_repository", None)
+    runtime = getattr(request.app.state, "runtime", None)
+    if repository is None and runtime is not None:
+        repository = runtime.repository
+    meetings = (
+        repository.list_overlapping(payload.window_start, payload.window_end)
+        if repository is not None
+        else ()
+    )
+    return demo_freebusy(payload, meetings)
 
 
 @router.post("/mock/rooms/search", response_model=RoomSearchResponse)

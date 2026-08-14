@@ -59,7 +59,7 @@ class MeetingTools:
         candidate = MeetingDraft(
             **meeting.model_dump(include=set(MeetingDraft.model_fields)) | values
         )
-        await self._ensure_available(candidate)
+        await self._ensure_available(candidate, exclude_meeting_id=meeting.id)
         ranked = await self.rooms.search(
             candidate.title,
             len(candidate.attendee_ids),
@@ -74,12 +74,15 @@ class MeetingTools:
             values["room_id"] = ranked[0].room.id
         return MeetingPatch(**values)
 
-    async def _ensure_available(self, draft: MeetingDraft) -> None:
+    async def _ensure_available(
+        self, draft: MeetingDraft, exclude_meeting_id: str | None = None
+    ) -> None:
         response = await self.calendar.freebusy(
             FreeBusyRequest(
                 attendee_ids=draft.attendee_ids,
                 window_start=draft.start_at,
                 window_end=draft.end_at,
+                exclude_meeting_id=exclude_meeting_id,
             )
         )
         busy_attendees = tuple(

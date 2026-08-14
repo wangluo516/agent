@@ -78,6 +78,7 @@ class MeetingAssistant:
                 context, rejected, f"参会人 {attendees} 在该时间段忙碌，请调整时间。"
             )
             result = {"state": rejected, "reply": reply}
+            self._discard_snapshot(key)
         except ConflictError:
             rejected = state.model_copy(update={"status": "rejected", "pending_action": None})
             reply = self._reply(context, rejected, "预览已过期，请重新预览。")
@@ -87,6 +88,7 @@ class MeetingAssistant:
             rejected = state.model_copy(update={"status": "rejected", "pending_action": None})
             reply = self._reply(context, rejected, "会议服务暂时不可用，请稍后重试。")
             result = {"state": rejected, "reply": reply}
+            self._discard_snapshot(key)
         self._states = {**self._states, key: result["state"]}
         return result["reply"]
 
@@ -106,7 +108,8 @@ class MeetingAssistant:
         reason = classify_unsafe_request(data["message"])
         if not reason:
             return {}
-        state = data["state"].model_copy(update={"status": "rejected", "pending_action": None})
+        self._discard_snapshot(self._state_key(data["context"]))
+        state = self._clear_action_context(data["state"]).model_copy(update={"status": "rejected"})
         return {
             "state": state,
             "reply": self._reply(data["context"], state, f"请求已拒绝：{reason}。"),
@@ -120,7 +123,20 @@ class MeetingAssistant:
             now=self._clock(),
             state=data["state"],
         )
-        return {"command": await self._interpreter.interpret(data["message"], context)}
+        command = await self._interpreter.interpret(data["message"], context)
+        state = data["state"]
+        pending = state.pending_action
+        if pending is not None and command.operation in {"create", "update"}:
+            command = command.model_copy(
+                update={
+                    "operation": pending.action,
+                    "meeting_id": pending.meeting_id if pending.action == "update" else None,
+                }
+            )
+        if command.operation in {"query", "availability"}:
+            self._discard_snapshot(self._state_key(data["context"]))
+            state = self._clear_action_context(state)
+        return {"command": command, "state": state}
 
     async def _reduce_resolve(self, data: WorkflowData) -> dict:
         if data.get("reply"):
@@ -298,9 +314,14 @@ class MeetingAssistant:
             if meeting is None:
                 raise ValueError("selected meeting is unavailable")
             patch = await self._tools.prepare_update(context.actor, meeting, state.draft)
+            preview = MeetingDraft(
+                **meeting.model_dump(include=set(MeetingDraft.model_fields))
+                | patch.model_dump(exclude_unset=True, exclude_none=True)
+            )
             return {
-                "state": state.model_copy(update={"draft": patch}),
+                "state": state.model_copy(update={"draft": MeetingPatch(**preview.model_dump())}),
                 "prepared": patch,
+                "preview": preview,
                 "expected_version": meeting.version,
             }
         return {}
@@ -328,7 +349,13 @@ class MeetingAssistant:
         state = state.model_copy(update={"pending_action": pending, "status": "needs_confirmation"})
         return {
             "state": state,
-            "reply": self._reply(context, state, "请确认以下会议变更。", data["prepared"], True),
+            "reply": self._reply(
+                context,
+                state,
+                "请确认以下会议变更。",
+                data.get("preview", data["prepared"]),
+                True,
+            ),
         }
 
     async def _confirm(self, data: WorkflowData) -> dict:
@@ -337,7 +364,7 @@ class MeetingAssistant:
         command, state, context = data["command"], data["state"], data["context"]
         if command.operation == "cancel":
             self._discard_snapshot(self._state_key(context))
-            state = state.model_copy(update={"pending_action": None, "status": "done"})
+            state = self._clear_action_context(state).model_copy(update={"status": "done"})
             return {
                 "state": state,
                 "reply": self._reply(context, state, "已取消，未写入任何会议。"),
@@ -391,9 +418,19 @@ class MeetingAssistant:
             )
             self._discard_snapshot(self._state_key(context))
         state = state.model_copy(
-            update={"pending_action": None, "status": "done", "selected_meeting_id": meeting.id}
+            update={
+                "draft": None,
+                "pending_action": None,
+                "status": "done",
+                "selected_meeting_id": meeting.id,
+                "meeting_candidates": self._candidates((meeting,)),
+            }
         )
-        return {"state": state, "reply": self._reply(context, state, "会议已保存。")}
+        saved_draft = MeetingDraft(**meeting.model_dump(include=set(MeetingDraft.model_fields)))
+        return {
+            "state": state,
+            "reply": self._reply(context, state, "会议已保存。", saved_draft),
+        }
 
     @staticmethod
     def _missing_fields(patch: MeetingPatch | None) -> tuple[str, ...]:
@@ -427,6 +464,17 @@ class MeetingAssistant:
             for stored_key, snapshot in self._update_snapshots.items()
             if stored_key != key
         }
+
+    @staticmethod
+    def _clear_action_context(state: ConversationState) -> ConversationState:
+        return state.model_copy(
+            update={
+                "draft": None,
+                "selected_meeting_id": None,
+                "meeting_candidates": (),
+                "pending_action": None,
+            }
+        )
 
     @staticmethod
     def _candidates(meetings) -> tuple[MeetingCandidate, ...]:

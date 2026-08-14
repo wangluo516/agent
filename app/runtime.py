@@ -138,6 +138,7 @@ def build_runtime(
         effective_settings, llm_factory=llm_factory
     )
     integrations_app = FastAPI()
+    integrations_app.state.meeting_repository = repository
     integrations_app.include_router(integrations_router)
     integration_client = httpx.AsyncClient(
         transport=httpx.ASGITransport(app=integrations_app),

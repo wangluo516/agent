@@ -6,10 +6,20 @@ def reduce_command(state: ConversationState, command: MeetingCommand) -> Convers
     if command.operation not in {"create", "update"}:
         return state
     if command.operation == "update":
-        target_id = command.meeting_id or state.selected_meeting_id
-        updated = state.model_copy(
-            update={"draft": command.patch, "selected_meeting_id": target_id}
+        pending_update = state.pending_action and state.pending_action.action == "update"
+        target_id = (
+            command.meeting_id
+            or (state.pending_action.meeting_id if pending_update else None)
+            or state.selected_meeting_id
         )
+        if pending_update:
+            updated = state.with_draft(command.patch).model_copy(
+                update={"selected_meeting_id": target_id}
+            )
+        else:
+            updated = state.model_copy(
+                update={"draft": command.patch, "selected_meeting_id": target_id}
+            )
     elif state.selected_meeting_id or (
         state.pending_action and state.pending_action.action != "create"
     ):

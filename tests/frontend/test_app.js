@@ -38,3 +38,24 @@ test('创建草稿会显示所有存在的会议字段', () => {
   assert.match(text, /会议室：room-orchid/);
   assert.match(text, /所需设施：whiteboard/);
 });
+
+test('确认保存后显示最终会议明细且不再提示确认', () => {
+  const text = formatAssistantReply({
+    reply: '会议已保存。',
+    needs_confirmation: false,
+    meeting_draft: {
+      title: '开发会议',
+      start_at: '2026-08-15T16:30:00+08:00',
+      end_at: '2026-08-15T17:30:00+08:00',
+      attendee_ids: ['jack', 'bob', 'alice', 'adam'],
+      room_id: 'room-orchid',
+      required_features: ['display'],
+    },
+  });
+
+  assert.match(text, /^会议已保存。/);
+  assert.match(text, /会议主题：开发会议/);
+  assert.match(text, /参会人：jack、bob、alice、adam/);
+  assert.match(text, /会议室：room-orchid/);
+  assert.doesNotMatch(text, /请手动输入/);
+});
