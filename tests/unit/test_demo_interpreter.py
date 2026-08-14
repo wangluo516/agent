@@ -53,3 +53,25 @@ async def test_interprets_query_update_confirmation_and_cancellation() -> None:
     assert update.patch.start_at == datetime(2026, 8, 15, 16, 0, tzinfo=SHANGHAI)
     assert (await interpreter.interpret("确认", context())).operation == "confirm"
     assert (await interpreter.interpret("取消", context())).operation == "cancel"
+
+
+@pytest.mark.asyncio
+async def test_interprets_exact_attendee_availability_query() -> None:
+    command = await DemoInterpreter().interpret("查询 bob 明天下午3点是否空闲", context())
+
+    assert command.operation == "availability"
+    assert command.availability is not None
+    assert command.availability.attendee_ids == ("bob",)
+    assert command.availability.window_start == datetime(2026, 8, 15, 15, 0, tzinfo=SHANGHAI)
+    assert command.availability.window_end == datetime(2026, 8, 15, 16, 0, tzinfo=SHANGHAI)
+
+
+@pytest.mark.asyncio
+async def test_interprets_common_free_time_query_for_an_afternoon() -> None:
+    command = await DemoInterpreter().interpret("查询 bob 和 carol 明天下午什么时候有空", context())
+
+    assert command.operation == "availability"
+    assert command.availability is not None
+    assert command.availability.attendee_ids == ("bob", "carol")
+    assert command.availability.window_start == datetime(2026, 8, 15, 13, 0, tzinfo=SHANGHAI)
+    assert command.availability.window_end == datetime(2026, 8, 15, 18, 0, tzinfo=SHANGHAI)

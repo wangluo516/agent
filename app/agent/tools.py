@@ -1,6 +1,6 @@
 from typing import Protocol
 
-from app.domain.errors import ValidationError
+from app.domain.errors import AttendeeBusyError, ValidationError
 from app.domain.models import Actor, Meeting, MeetingDraft, MeetingPatch
 from app.domain.policies import authorize_update, validate_draft
 from app.integrations.models import FreeBusyRequest, FreeBusyResponse
@@ -31,6 +31,9 @@ class MeetingTools:
 
     def query(self, actor: Actor) -> tuple[Meeting, ...]:
         return tuple(self.repository.list_for_actor(actor))
+
+    async def availability(self, request: FreeBusyRequest) -> FreeBusyResponse:
+        return await self.calendar.freebusy(request)
 
     async def prepare_create(self, patch: MeetingPatch) -> MeetingDraft:
         draft = self._complete_draft(patch)
@@ -79,8 +82,11 @@ class MeetingTools:
                 window_end=draft.end_at,
             )
         )
-        if any(response.intervals_for(attendee) for attendee in draft.attendee_ids):
-            raise ValidationError("one or more attendees are busy")
+        busy_attendees = tuple(
+            attendee for attendee in draft.attendee_ids if response.intervals_for(attendee)
+        )
+        if busy_attendees:
+            raise AttendeeBusyError(busy_attendees)
 
     @staticmethod
     def _complete_draft(patch: MeetingPatch) -> MeetingDraft:

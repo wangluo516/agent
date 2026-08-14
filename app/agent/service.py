@@ -1,25 +1,28 @@
 from collections.abc import Callable
-from datetime import datetime
+from datetime import datetime, timedelta
 from uuid import uuid4
 
 from pydantic import Field
 
 from app.agent.demo_interpreter import DemoInterpreter
 from app.agent.graph import WorkflowData, build_workflow
-from app.agent.interpreter import InterpretContext, Interpreter
+from app.agent.interpreter import InterpretContext, Interpreter, MeetingCommand
 from app.agent.state import reduce_command
 from app.agent.tools import CalendarPort, MeetingTools, RepositoryPort, RoomPort
-from app.domain.errors import ConflictError, DomainError
+from app.domain.availability import find_common_free_slots
+from app.domain.errors import AttendeeBusyError, ConflictError, DomainError
 from app.domain.models import (
     Actor,
     ConversationState,
     ImmutableModel,
+    MeetingCandidate,
     MeetingDraft,
     MeetingPatch,
     PendingAction,
 )
 from app.domain.policies import classify_unsafe_request, confirmation_hash
 from app.integrations.errors import IntegrationError
+from app.integrations.models import FreeBusyRequest
 
 
 class ChatContext(ImmutableModel):
@@ -68,6 +71,13 @@ class MeetingAssistant:
             result = await self._graph.ainvoke(
                 {"context": context, "message": message, "state": state}
             )
+        except AttendeeBusyError as error:
+            rejected = state.model_copy(update={"status": "rejected", "pending_action": None})
+            attendees = ", ".join(error.attendee_ids)
+            reply = self._reply(
+                context, rejected, f"参会人 {attendees} 在该时间段忙碌，请调整时间。"
+            )
+            result = {"state": rejected, "reply": reply}
         except ConflictError:
             rejected = state.model_copy(update={"status": "rejected", "pending_action": None})
             reply = self._reply(context, rejected, "预览已过期，请重新预览。")
@@ -116,6 +126,38 @@ class MeetingAssistant:
         if data.get("reply"):
             return {}
         command = data["command"]
+        if command.operation == "select":
+            candidate = next(
+                (
+                    meeting
+                    for meeting in data["state"].meeting_candidates
+                    if meeting.id == command.meeting_id
+                ),
+                None,
+            )
+            if candidate is None or data["state"].draft is None:
+                state = data["state"].model_copy(update={"status": "needs_clarification"})
+                return {
+                    "state": state,
+                    "reply": self._reply(
+                        data["context"], state, "没有匹配到唯一会议，请重新选择。"
+                    ),
+                }
+            if self._tools.repository.find_visible(data["context"].actor, candidate.id) is None:
+                state = data["state"].model_copy(update={"status": "rejected"})
+                return {
+                    "state": state,
+                    "reply": self._reply(data["context"], state, "所选会议已不可用。"),
+                }
+            state = data["state"].model_copy(
+                update={"selected_meeting_id": candidate.id, "status": "collecting"}
+            )
+            return {
+                "state": state,
+                "command": MeetingCommand(
+                    operation="update", patch=state.draft, meeting_id=candidate.id
+                ),
+            }
         state = reduce_command(data["state"], command)
         if command.operation in {"create", "update"}:
             self._discard_snapshot(self._state_key(data["context"]))
@@ -124,6 +166,7 @@ class MeetingAssistant:
         meetings = self._tools.query(data["context"].actor)
         if len(meetings) == 1:
             return {"state": state.model_copy(update={"selected_meeting_id": meetings[0].id})}
+        state = state.model_copy(update={"meeting_candidates": self._candidates(meetings)})
         status = "needs_clarification"
         text = "找到多个会议，请先明确要修改哪一个。" if meetings else "没有找到可修改的会议。"
         state = state.model_copy(update={"status": status})
@@ -135,6 +178,20 @@ class MeetingAssistant:
         command, state = data["command"], data["state"]
         if command.operation in {"confirm", "cancel", "query", "update"}:
             return {}
+        if command.operation == "availability":
+            query = command.availability
+            missing: list[str] = []
+            if query is None or not query.attendee_ids:
+                missing.append("参会人")
+            if query is None or query.window_start is None or query.window_end is None:
+                missing.append("查询日期和时间")
+            if not missing:
+                return {}
+            state = state.model_copy(update={"status": "needs_clarification"})
+            return {
+                "state": state,
+                "reply": self._reply(data["context"], state, f"还需要提供：{'、'.join(missing)}。"),
+            }
         if command.operation == "unsafe":
             state = state.model_copy(update={"status": "rejected", "pending_action": None})
             return {
@@ -162,12 +219,60 @@ class MeetingAssistant:
         if data.get("reply"):
             return {}
         command, state, context = data["command"], data["state"], data["context"]
+        if command.operation == "availability":
+            query = command.availability
+            response = await self._tools.availability(
+                FreeBusyRequest(
+                    attendee_ids=query.attendee_ids,
+                    window_start=query.window_start,
+                    window_end=query.window_end,
+                )
+            )
+            busy_attendees = tuple(
+                attendee_id
+                for attendee_id in query.attendee_ids
+                if response.intervals_for(attendee_id)
+            )
+            state = state.model_copy(
+                update={
+                    "status": "done",
+                    "last_tool_results": (response.model_dump(mode="json"),),
+                }
+            )
+            if query.window_end - query.window_start > timedelta(minutes=query.duration_minutes):
+                free_slots = find_common_free_slots(
+                    {
+                        attendee_id: tuple(
+                            (interval.start_at, interval.end_at)
+                            for interval in response.intervals_for(attendee_id)
+                        )
+                        for attendee_id in query.attendee_ids
+                    },
+                    query.window_start,
+                    query.window_end,
+                    query.duration_minutes,
+                )
+                if free_slots:
+                    slots = "；".join(
+                        f"{start:%m月%d日 %H:%M}-{end:%H:%M}" for start, end in free_slots
+                    )
+                    text = f"共同空闲时间：{slots}。"
+                else:
+                    text = "该时间窗口内没有满足时长要求的共同空闲时间。"
+                return {"state": state, "reply": self._reply(context, state, text)}
+            if busy_attendees:
+                text = f"参会人 {', '.join(busy_attendees)} 在该时间段忙碌。"
+            else:
+                text = f"参会人 {', '.join(query.attendee_ids)} 在该时间段均空闲。"
+            return {"state": state, "reply": self._reply(context, state, text)}
         if command.operation == "query":
             meetings = self._tools.query(context.actor)
             selected = meetings[0].id if len(meetings) == 1 else None
+            candidates = self._candidates(meetings)
             state = state.model_copy(
                 update={
                     "selected_meeting_id": selected,
+                    "meeting_candidates": candidates,
                     "status": "done",
                     "last_tool_results": tuple(
                         meeting.model_dump(mode="json") for meeting in meetings
@@ -175,7 +280,8 @@ class MeetingAssistant:
                 }
             )
             text = "；".join(
-                f"{meeting.title}（{meeting.start_at:%m月%d日 %H:%M}）" for meeting in meetings
+                f"{index}. {meeting.title}（{meeting.start_at:%m月%d日 %H:%M}）"
+                for index, meeting in enumerate(meetings, start=1)
             )
             return {
                 "state": state,
@@ -321,3 +427,15 @@ class MeetingAssistant:
             for stored_key, snapshot in self._update_snapshots.items()
             if stored_key != key
         }
+
+    @staticmethod
+    def _candidates(meetings) -> tuple[MeetingCandidate, ...]:
+        return tuple(
+            MeetingCandidate(
+                id=meeting.id,
+                title=meeting.title,
+                start_at=meeting.start_at,
+                end_at=meeting.end_at,
+            )
+            for meeting in meetings
+        )

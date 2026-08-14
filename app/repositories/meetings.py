@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from contextlib import closing
 from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
@@ -13,12 +14,12 @@ from app.domain.models import Actor, Meeting, MeetingDraft, MeetingPatch
 class MeetingRepository:
     def __init__(self, database_path: Path | str) -> None:
         self._database_path = str(database_path)
-        with self._connect() as connection:
+        with closing(self._connect()) as connection, connection:
             schema = Path(__file__).with_name("schema.sql").read_text(encoding="utf-8")
             connection.executescript(schema)
 
     def list_for_actor(self, actor: Actor) -> list[Meeting]:
-        with self._connect() as connection:
+        with closing(self._connect()) as connection, connection:
             rows = connection.execute(
                 "SELECT * FROM meetings WHERE organizer_id = ? OR attendee_ids LIKE ? ORDER BY start_at, id",
                 (actor.id, f'%"{actor.id}"%'),
@@ -26,14 +27,14 @@ class MeetingRepository:
         return [self._to_meeting(row) for row in rows if self._is_visible(actor, row)]
 
     def find_visible(self, actor: Actor, meeting_id: str) -> Meeting | None:
-        with self._connect() as connection:
+        with closing(self._connect()) as connection, connection:
             row = connection.execute(
                 "SELECT * FROM meetings WHERE id = ?", (meeting_id,)
             ).fetchone()
         return self._to_meeting(row) if row is not None and self._is_visible(actor, row) else None
 
     def create(self, organizer_id: str, draft: MeetingDraft, idempotency_key: str) -> Meeting:
-        with self._connect() as connection:
+        with closing(self._connect()) as connection, connection:
             existing = connection.execute(
                 "SELECT * FROM meetings WHERE organizer_id = ? AND idempotency_key = ?",
                 (organizer_id, idempotency_key),
@@ -62,7 +63,7 @@ class MeetingRepository:
         changes = patch.model_dump(exclude_unset=True, exclude_none=True)
         if not changes:
             raise ConflictError("meeting update must include at least one change")
-        with self._connect() as connection:
+        with closing(self._connect()) as connection, connection:
             row = connection.execute(
                 "SELECT * FROM meetings WHERE id = ?", (meeting_id,)
             ).fetchone()

@@ -4,6 +4,8 @@ import pytest
 
 from app.agent.demo_interpreter import DemoInterpreter
 from app.config import Settings, load_settings
+from app.integrations.calendar_client import CalendarClient
+from app.integrations.room_client import RoomClient
 from app.runtime import build_interpreter, build_runtime
 
 
@@ -103,3 +105,13 @@ def test_fresh_runtime_seeds_one_visible_demo_meeting_without_duplicates(tmp_pat
     assert initial[0].title == "设计评审"
     assert len(repeated) == 1
     assert repeated[0].id == initial[0].id
+
+
+@pytest.mark.asyncio
+async def test_default_runtime_wires_mock_http_clients(tmp_path: Path) -> None:
+    runtime = build_runtime(tmp_path / "runtime.db")
+
+    assert isinstance(runtime.assistant._tools.calendar, CalendarClient)
+    assert isinstance(runtime.assistant._tools.rooms, RoomClient)
+
+    await runtime.aclose()

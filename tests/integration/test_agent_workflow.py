@@ -293,6 +293,43 @@ async def test_query_with_multiple_results_requires_unique_meeting_resolution(re
 
 
 @pytest.mark.asyncio
+async def test_select_first_candidate_continues_pending_update(repository) -> None:
+    first = repository.create(
+        "alice",
+        MeetingDraft(
+            title="设计评审",
+            start_at=datetime(2026, 8, 15, 10, tzinfo=SHANGHAI),
+            end_at=datetime(2026, 8, 15, 11, tzinfo=SHANGHAI),
+            attendee_ids=("bob",),
+        ),
+        "seed-first",
+    )
+    second = repository.create(
+        "alice",
+        MeetingDraft(
+            title="预算评审",
+            start_at=datetime(2026, 8, 15, 12, tzinfo=SHANGHAI),
+            end_at=datetime(2026, 8, 15, 13, tzinfo=SHANGHAI),
+            attendee_ids=("bob",),
+        ),
+        "seed-second",
+    )
+    service = assistant(repository)
+
+    queried = await service.handle(chat(), "查询我的会议")
+    clarify = await service.handle(chat(request_id="request-2"), "把会议改到明天下午4点")
+    preview = await service.handle(chat(request_id="request-3"), "第一个")
+    confirmed = await service.handle(chat(request_id="request-4"), "确认")
+
+    assert "1." in queried.reply and "2." in queried.reply
+    assert clarify.status == "needs_clarification"
+    assert preview.status == "needs_confirmation"
+    assert confirmed.status == "done"
+    assert repository.find_visible(chat().actor, first.id).start_at.hour == 16
+    assert repository.find_visible(chat().actor, second.id).start_at.hour == 12
+
+
+@pytest.mark.asyncio
 async def test_state_is_isolated_by_conversation_and_actor(repository) -> None:
     service = assistant(repository)
 
@@ -366,3 +403,26 @@ async def test_integration_failure_is_controlled_and_never_writes(repository) ->
     assert result.status == "rejected"
     assert "暂时不可用" in result.reply
     assert repository.list_for_actor(chat().actor) == []
+
+
+@pytest.mark.asyncio
+async def test_exact_attendee_availability_query_returns_calendar_result(repository) -> None:
+    service = assistant(repository)
+
+    result = await service.handle(chat(), "查询 bob 明天下午3点是否空闲")
+
+    assert result.status == "done"
+    assert "bob" in result.reply
+    assert "均空闲" in result.reply
+    assert "会议" not in result.reply
+
+
+@pytest.mark.asyncio
+async def test_common_free_time_query_returns_free_slots(repository) -> None:
+    service = assistant(repository)
+
+    result = await service.handle(chat(), "查询 bob 和 carol 明天下午什么时候有空")
+
+    assert result.status == "done"
+    assert "共同空闲时间" in result.reply
+    assert "13:00-18:00" in result.reply
