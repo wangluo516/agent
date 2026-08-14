@@ -63,7 +63,7 @@ class Meeting(MeetingDraft):
 
 
 class PendingAction(ImmutableModel):
-    action: Literal["create", "update"]
+    action: Literal["create", "update", "delete"]
     confirmation_hash: str = Field(min_length=1)
     meeting_id: str | None = None
 
@@ -81,6 +81,7 @@ class ConversationState(ImmutableModel):
     draft: MeetingPatch | None = None
     selected_meeting_id: str | None = None
     meeting_candidates: tuple[MeetingCandidate, ...] = ()
+    selection_action: Literal["update", "delete"] | None = None
     pending_action: PendingAction | None = None
     last_tool_results: tuple[dict[str, object], ...] = ()
     status: Literal[

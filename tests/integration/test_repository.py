@@ -78,6 +78,46 @@ def test_empty_patch_is_rejected_without_version_increment(
     assert repository.find_visible(Actor(id="alice", display_name="Alice"), meeting.id).version == 1
 
 
+def test_delete_returns_target_and_removes_only_that_meeting(
+    repository: MeetingRepository, draft: MeetingDraft
+) -> None:
+    target = repository.create("alice", draft, "delete-target")
+    other = repository.create(
+        "alice",
+        draft.model_copy(update={"title": "预算评审"}),
+        "delete-other",
+    )
+
+    deleted = repository.delete("alice", target.id, expected_version=target.version)
+
+    actor = Actor(id="alice", display_name="Alice")
+    assert deleted == target
+    assert repository.find_visible(actor, target.id) is None
+    assert repository.find_visible(actor, other.id) == other
+
+
+@pytest.mark.parametrize(
+    ("organizer_id", "expected_version"),
+    [("bob", 1), ("alice", 999)],
+)
+def test_delete_rejects_wrong_owner_or_stale_version(
+    repository: MeetingRepository,
+    draft: MeetingDraft,
+    organizer_id: str,
+    expected_version: int,
+) -> None:
+    target = repository.create("alice", draft, "protected-target")
+
+    with pytest.raises(ConflictError):
+        repository.delete(
+            organizer_id,
+            target.id,
+            expected_version=expected_version,
+        )
+
+    assert repository.find_visible(Actor(id="alice", display_name="Alice"), target.id) == target
+
+
 def test_repository_closes_every_sqlite_connection(
     tmp_path: Path, draft: MeetingDraft, monkeypatch: pytest.MonkeyPatch
 ) -> None:

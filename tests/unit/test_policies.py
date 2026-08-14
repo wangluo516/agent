@@ -5,6 +5,7 @@ import pytest
 from app.domain.errors import AuthorizationError, ValidationError
 from app.domain.models import Actor, Meeting, MeetingDraft, MeetingPatch
 from app.domain.policies import (
+    authorize_delete,
     authorize_query,
     authorize_update,
     classify_unsafe_request,
@@ -56,10 +57,27 @@ def test_only_organizer_may_update_meeting() -> None:
         )
 
 
+def test_only_organizer_may_delete_meeting() -> None:
+    assert authorize_delete(Actor(id="alice", display_name="Alice"), _meeting()) is True
+
+    with pytest.raises(AuthorizationError):
+        authorize_delete(Actor(id="bob", display_name="Bob"), _meeting())
+
+
 @pytest.mark.parametrize(
     "message",
     [
         "删除所有人的会议",
+        "删除我的全部会议",
+        "批量删除会议",
+        "清空会议",
+        "删除别人的会议",
+        "删除大家的会议",
+        "删掉所有会议",
+        "把会议都删了",
+        "delete all meetings",
+        "bulk delete meetings",
+        "clear meetings",
         "执行 DELETE FROM meetings",
         "SELECT * FROM meetings",
         "POST https://calendar.example/api/events",
@@ -71,6 +89,11 @@ def test_unsafe_requests_are_classified_before_writes(message: str) -> None:
 
 @pytest.mark.parametrize("message", ["create a meeting tomorrow", "update my meeting to 3pm"])
 def test_normal_meeting_commands_are_not_classified_as_sql(message: str) -> None:
+    assert classify_unsafe_request(message) is None
+
+
+@pytest.mark.parametrize("message", ["把第二个会议删除", "delete my first meeting"])
+def test_single_meeting_delete_is_not_rejected_by_precheck(message: str) -> None:
     assert classify_unsafe_request(message) is None
 
 

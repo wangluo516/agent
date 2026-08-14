@@ -26,4 +26,10 @@ def reduce_command(state: ConversationState, command: MeetingCommand) -> Convers
         updated = state.model_copy(update={"draft": command.patch, "selected_meeting_id": None})
     else:
         updated = state.with_draft(command.patch)
-    return updated.model_copy(update={"pending_action": None, "status": "collecting"})
+    return updated.model_copy(
+        update={
+            "selection_action": None,
+            "pending_action": None,
+            "status": "collecting",
+        }
+    )

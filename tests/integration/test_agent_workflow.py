@@ -6,7 +6,7 @@ import pytest
 
 from app.agent.interpreter import MeetingCommand
 from app.agent.service import AssistantReply, ChatContext, MeetingAssistant
-from app.domain.models import Actor, MeetingDraft, MeetingPatch
+from app.domain.models import Actor, Meeting, MeetingDraft, MeetingPatch
 from app.domain.room_ranking import RankedRoom, Room, RoomBusyInterval, rank_rooms
 from app.integrations.errors import IntegrationError
 from app.integrations.models import FreeBusyResponse, UserBusyIntervals
@@ -392,22 +392,7 @@ async def test_update_confirmation_rejects_preview_after_external_version_change
     )
     service = assistant(repository)
     await service.handle(chat(), "查询我的会议")
-    preview = await service.handle(chat(request_id="request-2"), "把刚才那个会改到明天下午4点")
-    repository.update("alice", meeting.id, MeetingPatch(title="外部已修改"), expected_version=1)
-
-    result = await service.handle(chat(request_id="request-3"), "确认")
-    persisted = repository.find_visible(chat().actor, meeting.id)
-
-    assert preview.status == "needs_confirmation"
-    assert result.status == "rejected"
-    assert "重新预览" in result.reply
-    assert persisted.title == "外部已修改"
-    assert persisted.start_at.hour == 10
-    assert persisted.version == 2
-
-
-@pytest.mark.asyncio
-async def test_update_patch_does_not_inherit_fields_from_prior_create_intent(repository) -> None:
+    preview = await service.handle(cha�^m�G����ƭy�inherit_fields_from_prior_create_intent(repository) -> None:
     meeting = repository.create(
         "alice",
         MeetingDraft(
@@ -523,6 +508,7 @@ async def test_unsafe_request_is_rejected_before_tools_and_produces_zero_writes(
     result = await service.handle(chat(), "删除所有人的会议")
 
     assert result.status == "rejected"
+    assert "不支持批量删除" in result.reply
     assert repository.list_for_actor(chat().actor) == []
 
 
@@ -595,3 +581,214 @@ async def test_common_free_time_query_returns_free_slots(repository) -> None:
     assert result.status == "done"
     assert "共同空闲时间" in result.reply
     assert "13:00-18:00" in result.reply
+
+
+def create_delete_target(
+    repository: MeetingRepository,
+    *,
+    title: str = "设计评审",
+    hour: int = 10,
+    key: str = "delete-target",
+) -> Meeting:
+    return repository.create(
+        "alice",
+        MeetingDraft(
+            title=title,
+            start_at=datetime(2026, 8, 15, hour, tzinfo=SHANGHAI),
+            end_at=datetime(2026, 8, 15, hour + 1, tzinfo=SHANGHAI),
+            attendee_ids=("bob",),
+            room_id="room-orchid",
+            required_features=("whiteboard",),
+        ),
+        key,
+    )
+
+
+@pytest.mark.asyncio
+async def test_delete_second_meeting_requires_confirmation_and_returns_details(repository) -> None:
+    first = create_delete_target(repository)
+    second = create_delete_target(
+        repository,
+        title="预算评审",
+        hour=15,
+        key="delete-second",
+    )
+    service = assistant(repository)
+
+    await service.handle(chat(), "查询我的会议")
+    preview = await service.handle(chat(request_id="delete-preview"), "把第二个会议删除")
+
+    assert preview.status == "needs_confirmation"
+    assert preview.needs_confirmation is True
+    assert preview.meeting_draft == MeetingDraft(
+        **second.model_dump(include=set(MeetingDraft.model_fields))
+    )
+    assert repository.find_visible(chat().actor, second.id) == second
+
+    confirmed = await service.handle(chat(request_id="delete-confirm"), "确认")
+
+    assert confirmed.status == "done"
+    assert confirmed.reply == "会议已删除。"
+    assert confirmed.meeting_draft == preview.meeting_draft
+    assert repository.find_visible(chat().actor, first.id) == first
+    assert repository.find_visible(chat().actor, second.id) is None
+
+
+@pytest.mark.asyncio
+async def test_attendee_cannot_delete_visible_meeting(repository) -> None:
+    target = create_delete_target(repository)
+    service = assistant(repository)
+
+    rejected = await service.handle(
+        chat(actor_id="bob", conversation_id="bob-delete"),
+        f"删除会议 {target.id}",
+    )
+
+    assert rejected.status == "rejected"
+    assert "组织者" in rejected.reply
+    assert repository.find_visible(chat(actor_id="bob").actor, target.id) == target
+
+
+@pytest.mark.asyncio
+async def test_cancel_delete_keeps_target(repository) -> None:
+    target = create_delete_target(repository)
+    service = assistant(repository)
+
+    preview = await service.handle(chat(), "删除我的会议")
+    cancelled = await service.handle(chat(request_id="delete-cancel"), "取消")
+
+    assert preview.status == "needs_confirmation"
+    assert cancelled.status == "done"
+    assert repository.find_visible(chat().actor, target.id) == target
+
+
+@pytest.mark.asyncio
+async def test_query_interrupts_delete_confirmation(repository) -> None:
+    target = create_delete_target(repository)
+    service = assistant(repository)
+
+    await service.handle(chat(), "删除我的会议")
+    queried = await service.handle(chat(request_id="delete-query"), "查询我的会议")
+    stale = await service.handle(chat(request_id="delete-stale"), "确认")
+
+    assert queried.status == "done"
+    assert stale.status == "rejected"
+    assert "确认已失效" in stale.reply
+    assert repository.find_visible(chat().actor, target.id) == target
+
+
+@pytest.mark.asyncio
+async def test_stale_delete_confirmation_does_not_delete(repository) -> None:
+    target = create_delete_target(repository)
+    service = assistant(repository)
+
+    await service.handle(chat(), "删除我的会议")
+    repository.update(
+        "alice",
+        target.id,
+        MeetingPatch(title="外部已修改"),
+        expected_version=target.version,
+    )
+    stale = await service.handle(chat(request_id="delete-stale-version"), "确认")
+
+    persisted = repository.find_visible(chat().actor, target.id)
+    assert stale.status == "rejected"
+    assert "重新预览" in stale.reply
+    assert persisted.title == "外部已修改"
+
+
+@pytest.mark.asyncio
+async def test_delete_multiple_meetings_requires_selection_then_previews_choice(repository) -> None:
+    first = create_delete_target(repository)
+    second = create_delete_target(
+        repository,
+        title="预算评审",
+        hour=15,
+        key="delete-second",
+    )
+    service = assistant(repository)
+
+    clarify = await service.handle(chat(), "删除我的会议")
+    preview = await service.handle(chat(request_id="delete-select"), "第二个")
+
+    assert clarify.status == "needs_clarification"
+    assert "多个" in clarify.reply
+    assert "1. 设计评审" in clarify.reply
+    assert "2. 预算评审" in clarify.reply
+    assert preview.status == "needs_confirmation"
+    assert preview.meeting_draft.title == second.title
+    assert repository.find_visible(chat().actor, first.id) == first
+    assert repository.find_visible(chat().actor, second.id) == second
+
+
+@pytest.mark.asyncio
+async def test_invalid_llm_delete_id_never_falls_back_to_only_visible_meeting(repository) -> None:
+    target = create_delete_target(repository)
+    service = scripted_assistant(
+        repository,
+        MeetingCommand(
+            operation="delete",
+            meeting_id="00000000-0000-0000-0000-000000000000",
+        ),
+    )
+
+    result = await service.handle(chat(), "删除不存在的会议")
+
+    assert result.status == "needs_clarification"
+    assert result.needs_confirmation is False
+    assert "没有匹配到" in result.reply
+    assert repository.find_visible(chat().actor, target.id) == target
+
+
+@pytest.mark.asyncio
+async def test_repeated_delete_confirmation_cannot_affect_another_meeting(repository) -> None:
+    target = create_delete_target(repository)
+    other = create_delete_target(
+        repository,
+        title="预算评审",
+        hour=15,
+        key="delete-other",
+    )
+    service = assistant(repository)
+
+    await service.handle(chat(), f"删除会议 {target.id}")
+    first_confirmation = await service.handle(chat(request_id="first-confirm"), "确认")
+    repeated = await service.handle(chat(request_id="repeat-confirm"), "确认")
+
+    assert first_confirmation.status == "done"
+    assert repeated.status == "rejected"
+    assert repository.find_visible(chat().actor, target.id) is None
+    assert repository.find_visible(chat().actor, other.id) == other
+
+
+@pytest.mark.asyncio
+async def test_deleted_meeting_is_not_left_as_selected_context(repository) -> None:
+    target = create_delete_target(repository)
+    service = assistant(repository)
+
+    await service.handle(chat(), f"删除会议 {target.id}")
+    await service.handle(chat(request_id="delete-confirm"), "确认")
+    follow_up = await service.handle(chat(request_id="delete-follow-up"), "把时间改到下午4点")
+
+    assert follow_up.status == "needs_clarification"
+    assert "没有找到可修改的会议" in follow_up.reply
+
+
+@pytest.mark.asyncio
+async def test_english_bulk_delete_is_rejected_before_interpreter(repository) -> None:
+    service = assistant(repository, calendar=BrokenCalendar())
+
+    rejected = await service.handle(chat(), "delete all meetings")
+
+    assert rejected.status == "rejected"
+    assert repository.list_for_actor(chat().actor) == []
+
+
+@pytest.mark.asyncio
+async def test_unknown_command_reply_lists_delete_as_a_supported_action(repository) -> None:
+    service = scripted_assistant(repository, MeetingCommand(operation="unknown"))
+
+    reply = await service.handle(chat(), "帮我处理会议")
+
+    assert reply.status == "needs_clarification"
+    assert "删除" in reply.reply

@@ -84,6 +84,38 @@ async def test_llm_prompt_contains_selected_meeting_and_candidates() -> None:
 
 
 @pytest.mark.asyncio
+async def test_llm_prompt_limits_delete_target_and_keeps_authorization_server_side() -> None:
+    candidate = MeetingCandidate(
+        id="meeting-1",
+        title="设计评审",
+        start_at=datetime(2026, 8, 15, 10, tzinfo=SHANGHAI),
+        end_at=datetime(2026, 8, 15, 11, tzinfo=SHANGHAI),
+    )
+    context = InterpretContext(
+        actor_id="alice",
+        now=datetime(2026, 8, 14, 9, tzinfo=SHANGHAI),
+        state=ConversationState(
+            actor_id="alice",
+            conversation_id="delete-chat",
+            meeting_candidates=(candidate,),
+            status="done",
+        ),
+    )
+    model = CapturingStructuredModel()
+    interpreter = LLMInterpreter.__new__(LLMInterpreter)
+    interpreter._model = model
+
+    await interpreter.interpret("删除第一个会议", context)
+
+    assert "delete" in model.prompt
+    assert "meeting_id" in model.prompt
+    assert "候选会议" in model.prompt
+    assert "权限" in model.prompt
+    assert "批量删除" in model.prompt
+    assert "operation=unsafe" in model.prompt
+
+
+@pytest.mark.asyncio
 async def test_collecting_create_routes_field_only_follow_up_to_patch_extractor() -> None:
     context = InterpretContext(
         actor_id="alice",
@@ -159,6 +191,32 @@ async def test_explicit_availability_query_can_interrupt_a_collecting_draft() ->
     interpreter._patch_model = patch_model
 
     command = await interpreter.interpret("查询 bob 明天下午4点半是否空闲", context)
+
+    assert command == expected
+    assert len(command_model.prompts) == 1
+    assert patch_model.prompts == []
+
+
+@pytest.mark.asyncio
+async def test_delete_synonym_interrupts_collecting_draft_and_uses_command_model() -> None:
+    context = InterpretContext(
+        actor_id="alice",
+        now=datetime(2026, 8, 14, 9, tzinfo=SHANGHAI),
+        state=ConversationState(
+            actor_id="alice",
+            conversation_id="delete-interrupt",
+            draft=MeetingPatch(title="开发会议"),
+            status="collecting",
+        ),
+    )
+    expected = MeetingCommand(operation="delete")
+    command_model = ReturningStructuredModel(expected)
+    patch_model = ReturningStructuredModel(MeetingPatch())
+    interpreter = LLMInterpreter.__new__(LLMInterpreter)
+    interpreter._model = command_model
+    interpreter._patch_model = patch_model
+
+    command = await interpreter.interpret("删掉这个会议", context)
 
     assert command == expected
     assert len(command_model.prompts) == 1

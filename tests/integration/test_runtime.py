@@ -107,6 +107,18 @@ def test_fresh_runtime_seeds_one_visible_demo_meeting_without_duplicates(tmp_pat
     assert repeated[0].id == initial[0].id
 
 
+def test_deleted_demo_seed_is_not_recreated_on_restart(tmp_path: Path) -> None:
+    database_path = tmp_path / "runtime.db"
+    first = build_runtime(database_path)
+    actor = first.actor("alice")
+    seeded = first.repository.list_for_actor(actor)[0]
+
+    first.repository.delete("alice", seeded.id, expected_version=seeded.version)
+    restarted = build_runtime(database_path)
+
+    assert restarted.repository.list_for_actor(restarted.actor("alice")) == []
+
+
 @pytest.mark.asyncio
 async def test_default_runtime_wires_mock_http_clients(tmp_path: Path) -> None:
     runtime = build_runtime(tmp_path / "runtime.db")

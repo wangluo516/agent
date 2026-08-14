@@ -14,6 +14,17 @@ class DemoInterpreter:
             return MeetingCommand(operation="confirm")
         if normalized in {"取消", "取消操作", "不确认"}:
             return MeetingCommand(operation="cancel")
+        meeting_delete = "参会人" not in normalized and (
+            re.search(r"删除|删掉|删了|移除", normalized)
+            or re.search(r"\b(?:delete|remove)\b", normalized, re.IGNORECASE)
+        )
+        if meeting_delete:
+            return MeetingCommand(
+                operation="delete",
+                meeting_id=self._candidate_id_from_message(
+                    normalized, context.state.meeting_candidates
+                ),
+            )
         selected_meeting_id = self._selected_candidate_id(normalized, context)
         if selected_meeting_id is not None:
             return MeetingCommand(operation="select", meeting_id=selected_meeting_id)
@@ -54,8 +65,15 @@ class DemoInterpreter:
     def _selected_candidate_id(message: str, context: InterpretContext) -> str | None:
         if context.state.status != "needs_clarification":
             return None
-        candidates = context.state.meeting_candidates
+        return DemoInterpreter._candidate_id_from_message(message, context.state.meeting_candidates)
+
+    @staticmethod
+    def _candidate_id_from_message(message: str, candidates) -> str | None:
         ordinal = re.search(r"第\s*([一二三四五六七八九十\d]+)\s*个", message)
+        if ordinal is None:
+            ordinal = re.search(r"(?<!\d)(\d+)\s*[.、]", message)
+        if ordinal is None:
+            ordinal = re.fullmatch(r"\s*(\d+)\s*", message)
         if ordinal:
             numbers = {
                 "一": 1,

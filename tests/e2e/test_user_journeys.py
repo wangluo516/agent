@@ -148,7 +148,7 @@ async def test_update_time_without_date_keeps_selected_meeting_day(app) -> None:
 
 
 @pytest.mark.asyncio
-async def test_delete_and_prompt_injection_are_rejected_with_zero_writes(app) -> None:
+async def test_bulk_delete_and_prompt_injection_are_rejected_with_zero_writes(app) -> None:
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         delete = await chat(client, "unsafe-flow", "删除所有人的会议")
@@ -158,3 +158,20 @@ async def test_delete_and_prompt_injection_are_rejected_with_zero_writes(app) ->
     assert delete["status"] == "rejected"
     assert injection["status"] == "rejected"
     assert query["reply"].count("设计评审") == 1
+
+
+@pytest.mark.asyncio
+async def test_delete_owned_meeting_releases_attendee_busy_time_after_confirmation(app) -> None:
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        before = await chat(client, "delete-busy-before", "查询 bob 明天上午10点是否空闲")
+        preview = await chat(client, "delete-owned", "删除我的会议")
+        confirmed = await chat(client, "delete-owned", "确认")
+        after = await chat(client, "delete-busy-after", "查询 bob 明天上午10点是否空闲")
+
+    assert "忙碌" in before["reply"]
+    assert preview["status"] == "needs_confirmation"
+    assert preview["meeting_draft"]["title"] == "设计评审"
+    assert confirmed["status"] == "done"
+    assert confirmed["meeting_draft"] == preview["meeting_draft"]
+    assert "均空闲" in after["reply"]

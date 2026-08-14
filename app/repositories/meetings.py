@@ -41,6 +41,21 @@ class MeetingRepository:
             ).fetchall()
         return [self._to_meeting(row) for row in rows]
 
+    def metadata_value(self, key: str) -> str | None:
+        with closing(self._connect()) as connection, connection:
+            row = connection.execute(
+                "SELECT value FROM app_metadata WHERE key = ?", (key,)
+            ).fetchone()
+        return row["value"] if row is not None else None
+
+    def set_metadata(self, key: str, value: str) -> None:
+        with closing(self._connect()) as connection, connection:
+            connection.execute(
+                """INSERT INTO app_metadata (key, value) VALUES (?, ?)
+                   ON CONFLICT(key) DO UPDATE SET value = excluded.value""",
+                (key, value),
+            )
+
     def create(self, organizer_id: str, draft: MeetingDraft, idempotency_key: str) -> Meeting:
         with closing(self._connect()) as connection, connection:
             existing = connection.execute(
@@ -105,6 +120,26 @@ class MeetingRepository:
             if result.rowcount != 1:
                 raise ConflictError("meeting was changed or is unavailable")
         return updated
+
+    def delete(self, organizer_id: str, meeting_id: str, expected_version: int) -> Meeting:
+        with closing(self._connect()) as connection, connection:
+            row = connection.execute(
+                "SELECT * FROM meetings WHERE id = ?", (meeting_id,)
+            ).fetchone()
+            if (
+                row is None
+                or row["organizer_id"] != organizer_id
+                or row["version"] != expected_version
+            ):
+                raise ConflictError("meeting was changed or is unavailable")
+            meeting = self._to_meeting(row)
+            result = connection.execute(
+                "DELETE FROM meetings WHERE id = ? AND organizer_id = ? AND version = ?",
+                (meeting_id, organizer_id, expected_version),
+            )
+            if result.rowcount != 1:
+                raise ConflictError("meeting was changed or is unavailable")
+        return meeting
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self._database_path)

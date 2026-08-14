@@ -13,3 +13,8 @@ CREATE TABLE IF NOT EXISTS meetings (
 );
 
 CREATE INDEX IF NOT EXISTS meetings_organizer_idx ON meetings (organizer_id);
+
+CREATE TABLE IF NOT EXISTS app_metadata (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);

@@ -9,6 +9,7 @@ Operation = Literal[
     "create",
     "query",
     "update",
+    "delete",
     "availability",
     "select",
     "confirm",

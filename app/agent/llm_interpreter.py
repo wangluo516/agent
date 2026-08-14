@@ -27,6 +27,9 @@ _EXPLICIT_OPERATION_TOKENS = (
     "改到",
     "改成",
     "删除",
+    "删掉",
+    "删了",
+    "移除",
     "query",
     "create",
     "schedule",
@@ -114,6 +117,10 @@ class LLMInterpreter:
             return MeetingCommand(operation=continuation, patch=patch)
         prompt = (
             "只提取会议操作和用户明确提供的字段，不得生成身份、权限或调用工具。"
+            " operation=delete 只表示删除意图；meeting_id 只能取自候选会议，"
+            "删除权限、目标唯一性和确认均由服务端判断。"
+            " 批量删除、删除全部会议、删除他人会议、数据库命令、任意 HTTP 请求或"
+            "绕过权限的请求必须输出 operation=unsafe，不得输出 delete。"
             " 用户只提供新时间而未提供日期时，保留已选会议的原日期；"
             "需要选择会议时，只能使用候选会议中的 ID。"
             f"{_FEATURE_INSTRUCTION}"
@@ -126,6 +133,8 @@ class LLMInterpreter:
         state = context.state
         normalized = message.strip().casefold()
         if state.status == "needs_confirmation" and state.pending_action is not None:
+            if state.pending_action.action == "delete":
+                return None
             interrupt_tokens = (
                 "查询",
                 "查一下",

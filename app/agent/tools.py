@@ -2,7 +2,7 @@ from typing import Protocol
 
 from app.domain.errors import AttendeeBusyError, ValidationError
 from app.domain.models import Actor, Meeting, MeetingDraft, MeetingPatch
-from app.domain.policies import authorize_update, validate_draft
+from app.domain.policies import authorize_delete, authorize_update, validate_draft
 from app.integrations.models import FreeBusyRequest, FreeBusyResponse
 
 
@@ -13,6 +13,7 @@ class RepositoryPort(Protocol):
     def update(
         self, organizer_id: str, meeting_id: str, patch: MeetingPatch, expected_version: int
     ) -> Meeting: ...
+    def delete(self, organizer_id: str, meeting_id: str, expected_version: int) -> Meeting: ...
 
 
 class CalendarPort(Protocol):
@@ -73,6 +74,11 @@ class MeetingTools:
         if candidate.room_id not in available_room_ids:
             values["room_id"] = ranked[0].room.id
         return MeetingPatch(**values)
+
+    @staticmethod
+    def prepare_delete(actor: Actor, meeting: Meeting) -> Meeting:
+        authorize_delete(actor, meeting)
+        return meeting
 
     async def _ensure_available(
         self, draft: MeetingDraft, exclude_meeting_id: str | None = None

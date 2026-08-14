@@ -123,3 +123,37 @@ def test_pending_edit_of_start_time_preserves_existing_duration() -> None:
 
     assert updated.draft.start_at == datetime(2026, 8, 15, 15, tzinfo=SHANGHAI)
     assert updated.draft.end_at == datetime(2026, 8, 15, 16, tzinfo=SHANGHAI)
+
+
+def test_state_accepts_delete_selection_and_pending_confirmation() -> None:
+    state = ConversationState(
+        actor_id="alice",
+        conversation_id="delete-chat",
+        selection_action="delete",
+        pending_action=PendingAction(
+            action="delete",
+            meeting_id="meeting-2",
+            confirmation_hash="delete-hash",
+        ),
+        status="needs_confirmation",
+    )
+
+    assert state.selection_action == "delete"
+    assert state.pending_action.action == "delete"
+
+
+def test_new_create_clears_stale_delete_selection_action() -> None:
+    original = ConversationState(
+        actor_id="alice",
+        conversation_id="delete-to-create",
+        selection_action="delete",
+        status="needs_clarification",
+    )
+
+    updated = reduce_command(
+        original,
+        MeetingCommand(operation="create", patch=MeetingPatch(title="新会议")),
+    )
+
+    assert updated.selection_action is None
+    assert updated.status == "collecting"
